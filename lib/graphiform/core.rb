@@ -325,11 +325,18 @@ module Graphiform
         @graphiform_pending_groupings ||= []
       end
 
+      def graphiform_pending_mutex
+        @graphiform_pending_mutex ||= Mutex.new
+      end
+
       def flush_pending_filters!
         return if @graphiform_pending_filters.nil? || @graphiform_pending_filters.empty?
 
-        pending = @graphiform_pending_filters
-        @graphiform_pending_filters = []
+        pending = graphiform_pending_mutex.synchronize do
+          drained = @graphiform_pending_filters
+          @graphiform_pending_filters = []
+          drained
+        end
         pending.each do |(name, identifier, options)|
           graphql_add_scopes_to_filter(name, identifier, **options)
         end
@@ -338,8 +345,11 @@ module Graphiform
       def flush_pending_sorts!
         return if @graphiform_pending_sorts.nil? || @graphiform_pending_sorts.empty?
 
-        pending = @graphiform_pending_sorts
-        @graphiform_pending_sorts = []
+        pending = graphiform_pending_mutex.synchronize do
+          drained = @graphiform_pending_sorts
+          @graphiform_pending_sorts = []
+          drained
+        end
         pending.each do |(name, identifier, options)|
           graphql_field_to_sort(name, identifier, **options)
         end
@@ -348,8 +358,11 @@ module Graphiform
       def flush_pending_groupings!
         return if @graphiform_pending_groupings.nil? || @graphiform_pending_groupings.empty?
 
-        pending = @graphiform_pending_groupings
-        @graphiform_pending_groupings = []
+        pending = graphiform_pending_mutex.synchronize do
+          drained = @graphiform_pending_groupings
+          @graphiform_pending_groupings = []
+          drained
+        end
         pending.each do |(name, identifier, options)|
           graphql_field_to_grouping(name, identifier, **options)
         end

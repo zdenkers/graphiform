@@ -62,8 +62,14 @@ module Graphiform
       set = tracked_names(klass)
       return false if set.include?(normalized)
 
-      yield
-      set << normalized
+      mutex = (klass.instance_variable_get(:@graphiform_names_mutex) ||
+        klass.instance_variable_set(:@graphiform_names_mutex, Monitor.new))
+      mutex.synchronize do
+        return false if set.include?(normalized)
+
+        yield
+        set << normalized
+      end
       true
     end
     # -----------------------------------------------------------------------

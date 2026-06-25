@@ -177,4 +177,131 @@ class ThreadSafetyTest < ActiveSupport::TestCase
       "The filter class registered under ::Inputs::Filters::#{model_name} " \
       "should be the same object returned to callers."
   end
+
+  # Even with `Helpers.get_const_or_create` fixed (all racers receive the same
+  # filter class), the body of `graphql_filter` in core.rb still relies on
+  # `Helpers.add_unless_exists` to dedupe the OR/AND argument additions on
+  # the shared class. `add_unless_exists` is check-then-act:
+  #
+  #   set = tracked_names(klass)
+  #   return false if set.include?(normalized)
+  #   yield
+  #   set << normalized
+  #
+  # Two threads can both observe `set.include?(...) == false`, both `yield`
+  # the `argument 'OR', [self]` class_eval, and both `set << normalized`.
+  # graphql-ruby silently overwrites the duplicate argument today; future
+  # versions may raise. This test exercises the primitive directly so the
+  # race is reproducible regardless of how `graphql_filter` is structured.
+  test 'concurrent Helpers.add_unless_exists must yield the block exactly once per (klass, name)' do
+    klass = Class.new
+    name  = 'OR'
+    gate  = Gate.new(THREAD_COUNT)
+
+    yield_count = 0
+    yield_mutex = Mutex.new
+    original = Graphiform::Helpers.method(:add_unless_exists)
+
+    Graphiform::Helpers.singleton_class.send(:define_method, :add_unless_exists) do |klass_arg, name_arg, &block|
+      wrapped = proc do
+        yield_mutex.synchronize { yield_count += 1 }
+        sleep 0.05
+        block.call
+      end
+      gate.wait
+      original.call(klass_arg, name_arg, &wrapped)
+    end
+
+    results = []
+    results_mutex = Mutex.new
+    threads = THREAD_COUNT.times.map do
+      Thread.new do
+        ran = Graphiform::Helpers.add_unless_exists(klass, name) { :did_work }
+        results_mutex.synchronize { results << ran }
+      end
+    end
+    threads.each(&:join)
+
+    assert_equal 1, yield_count,
+      "add_unless_exists block yielded #{yield_count} times across #{THREAD_COUNT} threads; " \
+      "should be exactly 1 (check-then-act race on the tracked-names Set)."
+    assert_equal 1, results.count(true),
+      "exactly one thread should observe add_unless_exists returning true; got #{results.count(true)}. " \
+      "Result vector: #{results.inspect}"
+  ensure
+    Graphiform::Helpers.singleton_class.send(:define_method, :add_unless_exists, original) if original
+  end
+
+  # `flush_pending_filters!` (core.rb:328) reads then clears
+  # `@graphiform_pending_filters` without synchronization:
+  #
+  #   pending = @graphiform_pending_filters
+  #   @graphiform_pending_filters = []
+  #   pending.each { |e| graphql_add_scopes_to_filter(*e) }
+  #
+  # Two threads can both grab the same `pending` array reference before either
+  # clears the ivar, then both iterate and call graphql_add_scopes_to_filter
+  # for every entry — duplicating the wiring work and (downstream) racing
+  # add_unless_exists yet again.
+  #
+  # CRuby's GVL normally keeps the read+clear window invisible. We use a
+  # TracePoint on the exact line of the clear to force a thread switch
+  # between the read and the clear so the race manifests deterministically.
+  test 'concurrent flush_pending_filters! must not double-process pending entries' do
+    model = build_model("TsFlush#{SecureRandom.hex(4)}")
+    # graphql_fields populated @graphiform_pending_filters with one entry per
+    # column declared in build_model. Snapshot the identifiers so we can
+    # assert each is processed exactly once.
+    pending = model.instance_variable_get(:@graphiform_pending_filters).dup
+    refute_empty pending, 'fixture expected pending filters from graphql_fields'
+    identifiers = pending.map { |(_n, id, _o)| id }
+
+    call_counts = Hash.new(0)
+    counts_mutex = Mutex.new
+    original_add = model.method(:graphql_add_scopes_to_filter)
+    model.define_singleton_method(:graphql_add_scopes_to_filter) do |name, identifier, **options|
+      counts_mutex.synchronize { call_counts[identifier] += 1 }
+      original_add.call(name, identifier, **options)
+    end
+
+    core_path = File.expand_path('../lib/graphiform/core.rb', __dir__)
+    # core.rb:332 is `@graphiform_pending_filters = []` — the clear that
+    # creates the read/clear race window. TracePoint :line fires BEFORE the
+    # line runs, so sleep here is between `pending = @gpf` and `@gpf = []`.
+    trace = TracePoint.new(:line) do |tp|
+      if tp.path == core_path && tp.lineno == 332 && tp.method_id == :flush_pending_filters!
+        sleep 0.02
+      end
+    end
+
+    gate = Gate.new(THREAD_COUNT)
+    errors = []
+    errors_mutex = Mutex.new
+
+    trace.enable
+    begin
+      threads = THREAD_COUNT.times.map do
+        Thread.new do
+          gate.wait
+          begin
+            model.flush_pending_filters!
+          rescue StandardError => e
+            errors_mutex.synchronize { errors << e }
+          end
+        end
+      end
+      threads.each(&:join)
+    ensure
+      trace.disable
+    end
+
+    assert_empty errors,
+      "flush_pending_filters! should not raise under concurrent access, got: #{errors.map(&:message).inspect}"
+
+    identifiers.each do |identifier|
+      assert_equal 1, call_counts[identifier],
+        "#{identifier} should be processed exactly once across all threads, " \
+        "was processed #{call_counts[identifier]} times (read-then-clear race in flush_pending_filters!)."
+    end
+  end
 end
