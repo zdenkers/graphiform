@@ -7,7 +7,7 @@ services:
         RUBY_VERSION: "3.3.6"
         APPRAISAL: "rails_7.1"
     volumes:
-      - .:/app
+      - ${DEV_BASE_DIR}/.:/app
     tmpfs:
       - /app/test/dummy/tmp
 
@@ -18,7 +18,7 @@ services:
         RUBY_VERSION: "3.3.6"
         APPRAISAL: "rails_7.2"
     volumes:
-      - .:/app
+      - ${DEV_BASE_DIR}/.:/app
     tmpfs:
       - /app/test/dummy/tmp
 
@@ -29,7 +29,7 @@ services:
         RUBY_VERSION: "3.3.6"
         APPRAISAL: "rails_8.0"
     volumes:
-      - .:/app
+      - ${DEV_BASE_DIR}/.:/app
     tmpfs:
       - /app/test/dummy/tmp
 
@@ -40,7 +40,7 @@ services:
         RUBY_VERSION: "3.3.6"
         APPRAISAL: "rails_8.1"
     volumes:
-      - .:/app
+      - ${DEV_BASE_DIR}/.:/app
     tmpfs:
       - /app/test/dummy/tmp
 
@@ -52,7 +52,7 @@ services:
         RUBY_VERSION: "3.4.1"
         APPRAISAL: "rails_7.2"
     volumes:
-      - .:/app
+      - ${DEV_BASE_DIR}/.:/app
     tmpfs:
       - /app/test/dummy/tmp
 
@@ -63,7 +63,7 @@ services:
         RUBY_VERSION: "3.4.1"
         APPRAISAL: "rails_8.0"
     volumes:
-      - .:/app
+      - ${DEV_BASE_DIR}/.:/app
     tmpfs:
       - /app/test/dummy/tmp
 
@@ -74,7 +74,7 @@ services:
         RUBY_VERSION: "3.4.1"
         APPRAISAL: "rails_8.1"
     volumes:
-      - .:/app
+      - ${DEV_BASE_DIR}/.:/app
     tmpfs:
       - /app/test/dummy/tmp
 
@@ -86,7 +86,7 @@ services:
         RUBY_VERSION: "3.3.6"
         APPRAISAL: "rails_8.1"
     volumes:
-      - .:/app
+      - ${DEV_BASE_DIR}/.:/app
       - bundle-shell:/bundle
     tmpfs:
       - /app/test/dummy/tmp

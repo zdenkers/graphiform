@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'set'
+require 'monitor'
 
 module Graphiform
   module Helpers
@@ -85,12 +86,22 @@ module Graphiform
         val.ancestors.include?(GraphQL::Schema::Resolver)
     end
 
+    CONST_LOCKS = {}
+    CONST_LOCKS_MUTEX = Mutex.new
+
     def self.get_const_or_create(const, mod = Object)
       return mod.const_get(const) if mod.const_defined?(const, false)
-      
-      val = yield
-      mod.const_set(const, val)
-      val
+
+      key = [mod, const.to_s]
+      lock = CONST_LOCKS_MUTEX.synchronize { CONST_LOCKS[key] ||= Monitor.new }
+
+      lock.synchronize do
+        return mod.const_get(const) if mod.const_defined?(const, false)
+
+        val = yield
+        mod.const_set(const, val)
+        val
+      end
     end
 
     def self.full_const_name(name)
